@@ -1,0 +1,611 @@
+Awesome—let’s set you up with a production-grade Azure DevOps CI/CD for Databricks, plus a solid branching strategy that scales.
+
+I’ll give you:
+
+1. the big-picture architecture,
+
+
+2. a recommended repo layout,
+
+
+3. YAML pipelines (multi-stage, gated),
+
+
+4. auth & secrets setup (service principal—no PATs),
+
+
+5. deployment options (Databricks Bundles or plain API),
+
+
+6. testing, approvals, and guardrails,
+
+
+7. the branching model.
+
+
+
+
+---
+
+1) Production architecture (at a glance)
+
+Azure DevOps Repo holds all notebooks / code / job specs / bundle configs.
+
+Multi-stage pipeline: Validate → Build/Package → Unit Tests → Security Scan → Deploy Dev → Integration Tests → Deploy QA → Smoke Tests → Deploy Prod.
+
+Environments in ADO (Dev/QA/Prod) with manual approvals and checks.
+
+Auth: Azure AD service principal + federated credentials (OIDC) → AzureCLI login in the pipeline → Databricks CLI uses Azure auth (no PAT).
+
+Config per env: variables & key vault references; no hardcoded URLs.
+
+Deploy style (choose one):
+
+Recommended: Databricks Asset Bundles (DABs) – declarative, idempotent, easy rollbacks.
+
+Alternative: lightweight Python scripts calling Databricks REST API to import notebooks & update jobs.
+
+
+
+
+---
+
+2) Repo layout (clean & bundle-ready)
+
+databricks-platform/
+├─ notebooks/                     # Notebooks (Python/SQL/Scala)
+│  ├─ ingestion/
+│  ├─ transformations/
+│  └─ dlt/
+├─ src/                           # Libraries used by notebooks (packaged as wheel)
+│  └─ mylib/...
+├─ jobs/                          # Job specs (JSON/YAML)
+│  ├─ nightly_job.yaml
+│  └─ streaming_job.yaml
+├─ tests/                         # Pytest unit & integration tests
+│  ├─ unit/
+│  └─ integration/
+├─ bundles/                       # Databricks Bundles (per solution)
+│  └─ platform/
+│     ├─ bundle.yml               # Main bundle file
+│     └─ resources/               # Jobs, DLT pipelines, permissions
+├─ env/                           # Env-specific config overlays
+│  ├─ dev.yaml
+│  ├─ qa.yaml
+│  └─ prod.yaml
+├─ scripts/
+│  ├─ upload_notebooks.py         # (Alt deploy) Import notebooks via REST
+│  ├─ update_jobs.py              # (Alt deploy) Create/update jobs
+│  └─ run_tests.sh
+├─ .azure-pipelines/
+│  ├─ templates/
+│  │  ├─ steps-validate.yml
+│  │  ├─ steps-build.yml
+│  │  ├─ steps-tests.yml
+│  │  ├─ steps-security.yml
+│  │  ├─ steps-deploy-bundle.yml  # Uses Databricks Bundles
+│  │  └─ steps-deploy-api.yml     # Uses REST scripts
+│  └─ pipeline.yml                # Main multi-stage pipeline
+├─ pyproject.toml                 # Build config for library packaging
+├─ requirements.txt               # Tooling (pytest, bandit, databricks-cli if needed)
+└─ README.md
+
+
+---
+
+3) Service principal auth (no PATs)
+
+Create once (cloud side):
+
+Azure AD App Registration + federated credential for Azure DevOps (workload identity federation).
+
+Give it:
+
+Access to your Databricks workspace (Contributor on the workspace resource).
+
+If you call the Databricks ARM-backed APIs, it needs appropriate permissions on the subscription/resource group too.
+
+
+In Azure DevOps:
+
+Create an Azure service connection (Azure Resource Manager via OIDC).
+
+Create variable groups (Dev/QA/Prod) with:
+
+DATABRICKS_WORKSPACE_URL (e.g., https://adb-<workspace-id>.<region>.azuredatabricks.net)
+
+DATABRICKS_WORKSPACE_RESOURCE_ID
+
+Optional: Key Vault references for any secrets (e.g., storage keys).
+
+
+
+The pipeline uses AzureCLI@2 to az login with that service connection.
+
+Databricks CLI uses Azure auth: databricks auth login --host $DATABRICKS_WORKSPACE_URL --azure-resource-id $DATABRICKS_WORKSPACE_RESOURCE_ID --auth-type azure-cli.
+
+
+> If you must avoid the CLI entirely, the Python deploy scripts can obtain an AAD token via az account get-access-token --resource 2ff814a6-3304-4ab8-85cb-cd0e6f879c1d and call Databricks REST with the right headers. But CLI + Bundles is cleaner.
+
+
+
+
+---
+
+4) Main pipeline (multi-stage with gates)
+
+.azure-pipelines/pipeline.yml
+
+trigger:
+  branches:
+    include:
+      - main
+      - release/*
+pr:
+  branches:
+    include:
+      - main
+
+variables:
+  pythonVersion: '3.10'
+
+stages:
+# ----- Validate -----
+- stage: Validate
+  displayName: Validate & Lint
+  jobs:
+  - job: validate
+    pool: { vmImage: 'ubuntu-latest' }
+    steps:
+    - checkout: self
+      persistCredentials: true
+
+    - task: UsePythonVersion@0
+      inputs: { versionSpec: '$(pythonVersion)' }
+
+    - script: |
+        python -m pip install --upgrade pip
+        pip install ruff yamllint
+        ruff check .
+        yamllint .
+      displayName: Lint (ruff) & YAML validation
+
+# ----- Build/Package -----
+- stage: Build
+  displayName: Build & Package
+  dependsOn: Validate
+  jobs:
+  - job: build
+    pool: { vmImage: 'ubuntu-latest' }
+    steps:
+    - checkout: self
+    - task: UsePythonVersion@0
+      inputs: { versionSpec: '$(pythonVersion)' }
+    - script: |
+        python -m pip install --upgrade pip build
+        pip install -r requirements.txt
+        python -m build  # builds wheel from pyproject.toml
+      displayName: Build wheel
+
+    - publish: dist
+      artifact: wheel
+
+# ----- Unit Tests & Security -----
+- stage: Test
+  displayName: Unit Tests
+  dependsOn: Build
+  jobs:
+  - job: unit_tests
+    pool: { vmImage: 'ubuntu-latest' }
+    steps:
+    - download: current
+      artifact: wheel
+    - task: UsePythonVersion@0
+      inputs: { versionSpec: '$(pythonVersion)' }
+    - script: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install dist/*.whl
+        pytest -q tests/unit
+      displayName: Run unit tests
+
+- stage: Security
+  displayName: Security Scan
+  dependsOn: Test
+  jobs:
+  - job: security
+    pool: { vmImage: 'ubuntu-latest' }
+    steps:
+    - task: UsePythonVersion@0
+      inputs: { versionSpec: '$(pythonVersion)' }
+    - script: |
+        pip install bandit
+        bandit -r src -ll
+      displayName: Bandit (SAST)
+
+# ----- Deploy Dev -----
+- stage: Deploy_Dev
+  displayName: Deploy to Dev
+  dependsOn: Security
+  variables:
+  - group: databricks-dev
+  jobs:
+  - deployment: deploy_dev
+    environment: dev
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - template: templates/steps-deploy-bundle.yml
+            parameters:
+              envName: dev
+
+# ----- Integration Tests (Dev) -----
+- stage: IT_Dev
+  displayName: Integration Tests on Dev
+  dependsOn: Deploy_Dev
+  jobs:
+  - job: it_dev
+    pool: { vmImage: 'ubuntu-latest' }
+    steps:
+    - task: UsePythonVersion@0
+      inputs: { versionSpec: '$(pythonVersion)' }
+    - script: |
+        pip install -r requirements.txt
+        pytest -q tests/integration --maxfail=1
+      displayName: Integration tests
+
+# ----- Deploy QA (with approval) -----
+- stage: Deploy_QA
+  displayName: Deploy to QA
+  dependsOn: IT_Dev
+  variables:
+  - group: databricks-qa
+  jobs:
+  - deployment: deploy_qa
+    environment: qa   # gate this env in ADO with manual approval/checks
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - template: templates/steps-deploy-bundle.yml
+            parameters:
+              envName: qa
+
+# ----- Smoke on QA -----
+- stage: Smoke_QA
+  displayName: Smoke Tests on QA
+  dependsOn: Deploy_QA
+  jobs:
+  - job: smoke
+    pool: { vmImage: 'ubuntu-latest' }
+    steps:
+    - task: UsePythonVersion@0
+      inputs: { versionSpec: '$(pythonVersion)' }
+    - script: |
+        pip install -r requirements.txt
+        pytest -q tests/integration -k "smoke"
+      displayName: Smoke tests
+
+# ----- Deploy Prod (with approval) -----
+- stage: Deploy_Prod
+  displayName: Deploy to Prod
+  dependsOn: Smoke_QA
+  variables:
+  - group: databricks-prod
+  jobs:
+  - deployment: deploy_prod
+    environment: prod  # gate this env; require CAB approvals, change ticket, etc.
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - template: templates/steps-deploy-bundle.yml
+            parameters:
+              envName: prod
+
+
+---
+
+5) Databricks Bundles (recommended)
+
+bundles/platform/bundle.yml (minimal example)
+
+bundle:
+  name: platform
+
+workspace:
+  host: ${env.DATABRICKS_WORKSPACE_URL}
+
+targets:
+  dev:
+    default: true
+    workspace:
+      root_path: /Shared/platform/dev
+    variables:
+      catalog: dev_catalog
+  qa:
+    workspace:
+      root_path: /Shared/platform/qa
+    variables:
+      catalog: qa_catalog
+  prod:
+    workspace:
+      root_path: /Shared/platform/prod
+    variables:
+      catalog: prod_catalog
+
+resources:
+  jobs:
+    nightly_job:
+      name: nightly_etl
+      tasks:
+        - task_key: run_transform
+          notebook_task:
+            notebook_path: ${workspace.root_path}/notebooks/transformations/run_transform
+          job_cluster_key: auto
+      permissions:
+        - level: CAN_VIEW
+          group_name: data-readers
+
+include:
+  - ../../notebooks/**
+  - resources/**
+
+Env overlays (env/dev.yaml)
+
+variables:
+  catalog: dev_catalog
+workspace:
+  root_path: /Shared/platform/dev
+
+Template step to deploy bundle — .azure-pipelines/templates/steps-deploy-bundle.yml
+
+parameters:
+  envName: ''
+
+steps:
+- task: UsePythonVersion@0
+  inputs: { versionSpec: '3.10' }
+
+- task: AzureCLI@2
+  displayName: Azure CLI login (federated)
+  inputs:
+    azureSubscription: 'YOUR-AZURE-SC-NAME'
+    scriptType: bash
+    scriptLocation: inlineScript
+    inlineScript: |
+      echo "Logged into Azure."
+
+- script: |
+    python -m pip install --upgrade pip
+    pip install databricks-cli
+    echo "Logging Databricks CLI with Azure auth..."
+    databricks auth login \
+      --host "$(DATABRICKS_WORKSPACE_URL)" \
+      --azure-resource-id "$(DATABRICKS_WORKSPACE_RESOURCE_ID)" \
+      --auth-type azure-cli
+  displayName: Configure Databricks CLI (Azure)
+
+- script: |
+    pip install databricks-bundles
+    cd bundles/platform
+    databricks bundles validate --target ${{ parameters.envName }}
+    databricks bundles deploy --target ${{ parameters.envName }} --verbose
+    databricks bundles run nightly_job --target ${{ parameters.envName }} --wait
+  displayName: Deploy & Run bundle
+
+> Swap nightly_job with your job IDs from the bundle. Add other jobs/DLT pipelines to resources:.
+
+
+
+
+---
+
+6) Alternative “no-bundles” deploy (REST API via Python)
+
+scripts/upload_notebooks.py (imports a folder recursively)
+
+import argparse, base64, os, json, subprocess, sys, pathlib, requests
+
+def get_az_token(resource="2ff814a6-3304-4ab8-85cb-cd0e6f879c1d"):
+    # Get AAD token for Azure Databricks via Azure CLI (already logged in via AzureCLI@2)
+    cmd = ["az", "account", "get-access-token", "--resource", resource, "--query", "accessToken", "-o", "tsv"]
+    return subprocess.check_output(cmd, text=True).strip()
+
+def import_dir(host, workspace_path, local_dir, token, language="PYTHON", fmt="SOURCE"):
+    for root, _, files in os.walk(local_dir):
+        for f in files:
+            if not f.endswith((".py",".sql",".scala",".r",".dbc",".ipynb")):
+                continue
+            local_path = os.path.join(root, f)
+            rel = os.path.relpath(local_path, local_dir)
+            ws_path = f"{workspace_path}/{rel}".replace("\\","/")
+            pathlib.Path(ws_path).parent.as_posix()
+
+            with open(local_path, "rb") as fh:
+                content = base64.b64encode(fh.read()).decode("utf-8")
+
+            url = f"{host}/api/2.0/workspace/import"
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json"
+            }
+            payload = {
+                "path": ws_path,
+                "language": language,
+                "overwrite": True,
+                "format": fmt,
+                "content": content
+            }
+            r = requests.post(url, headers=headers, data=json.dumps(payload), timeout=120)
+            if r.status_code not in (200):
+                print(f"Failed to import {ws_path}: {r.status_code} {r.text}", file=sys.stderr)
+                sys.exit(1)
+            else:
+                print(f"Imported {ws_path}")
+
+if __name__ == "__main__":
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--host", required=True, help="https://adb-xxx.azuredatabricks.net")
+    ap.add_argument("--workspace-path", required=True, help="/Shared/platform/dev/notebooks")
+    ap.add_argument("--local-dir", default="notebooks")
+    args = ap.parse_args()
+    token = get_az_token()
+    import_dir(args.host, args.workspace_path, args.local_dir, token)
+
+Template using REST — .azure-pipelines/templates/steps-deploy-api.yml
+
+parameters:
+  envName: ''
+steps:
+- task: AzureCLI@2
+  inputs:
+    azureSubscription: 'YOUR-AZURE-SC-NAME'
+    scriptType: bash
+    scriptLocation: inlineScript
+    inlineScript: |
+      echo "Azure login complete."
+
+- task: UsePythonVersion@0
+  inputs: { versionSpec: '3.10' }
+
+- script: |
+    pip install requests
+    python scripts/upload_notebooks.py \
+      --host "$(DATABRICKS_WORKSPACE_URL)" \
+      --workspace-path "/Shared/platform/${{ parameters.envName }}/notebooks" \
+      --local-dir "notebooks"
+  displayName: Import notebooks via REST
+
+> You can add a companion update_jobs.py to call /api/2.1/jobs/create|reset from JSON specs under jobs/.
+
+
+
+
+---
+
+7) Testing & quality gates (must-have)
+
+Unit tests with pytest for your src/ library (fast, no cluster).
+
+Notebook unit tests: parameterize notebooks (widgets / %run) and unit-test helper functions in src/.
+
+Integration tests: small jobs on Dev workspace; assert row counts, schema, expectations.
+
+Smoke tests on QA right after deployment.
+
+Static analysis: ruff, bandit.
+
+Data quality: if using DLT/UC, use expectations and fail the run on critical rules.
+
+
+
+---
+
+8) Environment & secrets management
+
+Variable groups per env (Dev/QA/Prod) containing:
+
+DATABRICKS_WORKSPACE_URL
+
+DATABRICKS_WORKSPACE_RESOURCE_ID
+
+storage/container names, UC catalog/schema, any external locations
+
+
+Key Vault references for secrets (service principal secrets, storage keys if needed).
+
+No secrets in repo. Use ADO Environments with required checks (approvals, branch policy passes, change ticket).
+
+
+
+---
+
+9) Permissions & RBAC (least privilege)
+
+Databricks workspace groups: data-engineers, data-analysts, platform-admins.
+
+Assign job permissions and folder permissions in bundle resources: or post-deploy scripts.
+
+Unity Catalog: manage catalog/schema/table grants per group; never grant to users.
+
+
+
+---
+
+10) Observability & rollback
+
+After deploy, run a canary job and post result to ADO summary.
+
+Emit run links (job run URL) as pipeline logs.
+
+Rollback options:
+
+Bundles: deploy previous tag (databricks bundles deploy --target prod --version <tag>).
+
+Jobs: keep last known good job JSON and call jobs/reset.
+
+
+
+
+---
+
+11) Production-grade branching strategy (simple & strong)
+
+Trunk-based with release branches (recommended):
+
+main: always releasable. Protected: PR only, mandatory reviewers, status checks (lint, unit tests).
+
+feature/*: short-lived branches from main. PR → main.
+
+release/x.y: cut when you want a controlled promotion to QA/Prod. Hotfixes go to release/x.y and back-merge to main.
+
+tags: create annotated tag on the exact commit deployed to Prod (traceability).
+
+
+Policies to enforce:
+
+Require PR reviews (min 2), linked work items, successful CI (Validate, Build, Unit Tests, Security).
+
+Disallow direct pushes to main and release/*.
+
+Require signed commits (optional), require conversation resolution before merge.
+
+
+How deployments trigger:
+
+On merge to main: CI + auto Dev deploy.
+
+On release/*: CI → QA deploy (with approval) → Prod (with approval & change ticket).
+
+You can also manually retry stages using ADO environments.
+
+
+> If you prefer GitFlow, it works, but trunk-based with release branches keeps cycle time low and is Databricks-friendly.
+
+
+
+
+---
+
+What you can do next (fast path)
+
+1. Create the repo with the folder structure above.
+
+
+2. Add the provided pipeline.yml and the steps-deploy-bundle.yml template.
+
+
+3. Set up the Azure service connection (OIDC) and three variable groups: databricks-dev, databricks-qa, databricks-prod.
+
+
+4. Create ADO Environments (dev/qa/prod) and add approval checks for QA/Prod.
+
+
+5. Commit a tiny bundle (one job + one notebook) and run the pipeline.
+
+
+
+If you want, tell me your workspace URL(s) and whether you want Bundles or the REST-script path, and I’ll tailor the exact bundle.yml, job specs, and the minimal set of variables for your org.
+
