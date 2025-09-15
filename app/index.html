@@ -1,0 +1,490 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>KubeMind — AI Analysis POC</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0b0f14; --panel:#0f1620; --muted:#9aa7b2; --accent:#6ee7b7;
+    --danger:#ff7a7a; --warn:#ffbf69; --glass: rgba(255,255,255,0.03);
+    font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0;background:linear-gradient(180deg,#071018 0%, #0b0f14 100%);color:#dfeff6;
+    -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;
+  }
+  .container{max-width:1200px;margin:32px auto;padding:24px;}
+  .header{display:flex;align-items:center;gap:16px;margin-bottom:20px}
+  .logo{
+    width:56px;height:56px;border-radius:10px;background:linear-gradient(135deg,#0ff6c1, #4cc9f0);
+    display:flex;align-items:center;justify-content:center;color:#071018;font-weight:800;font-size:20px;
+    box-shadow: 0 6px 18px rgba(12,20,28,0.6);
+  }
+  h1{margin:0;font-size:20px}
+  .sub{color:var(--muted);font-size:13px}
+
+  .grid{
+    display:grid;grid-template-columns: 360px 1fr; gap:18px;
+  }
+  .card{background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01)); border-radius:12px;padding:16px;box-shadow: 0 6px 18px rgba(2,6,12,0.6);border:1px solid rgba(255,255,255,0.03)}
+  .card h3{margin:0 0 8px 0;font-size:15px}
+  .muted{color:var(--muted);font-size:13px}
+
+  /* Left column */
+  .summary {display:flex;flex-direction:column;gap:12px}
+  .metric{display:flex;justify-content:space-between;align-items:center;padding:10px;background:var(--glass);border-radius:10px}
+  .metric .big{font-size:20px;font-weight:700}
+  .run-area{display:flex;flex-direction:column;gap:10px}
+  .btn{
+    background:linear-gradient(90deg,#25d07a,#4cc9f0);border:none;padding:12px 16px;border-radius:10px;font-weight:700;color:#03121a;
+    cursor:pointer;box-shadow:0 8px 18px rgba(36,200,140,0.12);font-size:14px;
+  }
+  .btn.secondary{background:transparent;border:1px solid rgba(255,255,255,0.06);color:var(--accent)}
+  .small{font-size:12px;color:var(--muted)}
+
+  /* Agent list */
+  .agents{display:flex;flex-direction:column;gap:8px;margin-top:8px}
+  .agent{
+    display:flex;align-items:center;gap:12px;padding:10px;background:rgba(255,255,255,0.02);border-radius:10px;
+  }
+  .dot{width:12px;height:12px;border-radius:50%;background:#2a3742;box-shadow:0 0 6px rgba(0,0,0,0.5)}
+  .dot.running{background:linear-gradient(90deg,#7ef1c4,#39b3ff);box-shadow:0 6px 18px rgba(60,200,170,0.12);animation: pulse 1.2s infinite;}
+  .dot.ok{background:#3cdf94}
+  .dot.warn{background:var(--warn)}
+  .dot.err{background:var(--danger)}
+  @keyframes pulse{0%{transform:scale(1)}50%{transform:scale(1.12)}100%{transform:scale(1)}}
+
+  .agent .meta{display:flex;flex-direction:column}
+  .agent .meta .title{font-weight:700;font-size:13px}
+  .agent .meta .desc{font-size:12px;color:var(--muted)}
+
+  .log{height:220px;overflow:auto;background:linear-gradient(180deg, rgba(255,255,255,0.01), rgba(255,255,255,0.00));border-radius:10px;padding:12px;font-family:monospace;font-size:12px;color:#cfeef0}
+
+  /* Right column */
+  .right-grid{display:grid;grid-template-columns:1fr 360px;gap:18px}
+  .panel{background:transparent}
+  .recommendations{display:flex;flex-direction:column;gap:10px}
+  .rec{background:rgba(255,255,255,0.02);padding:12px;border-radius:10px}
+  .tag{padding:6px 8px;border-radius:8px;font-size:12px;background:rgba(255,255,255,0.03);display:inline-block}
+
+  /* sparkline */
+  .spark{width:120px;height:32px}
+  .trend-up{color:#7ef1c4;font-weight:700}
+  .trend-down{color:var(--danger);font-weight:700}
+
+  /* footer */
+  .footer{margin-top:18px;color:var(--muted);font-size:13px;text-align:center}
+
+  /* responsive */
+  @media (max-width:980px){.grid{grid-template-columns:1fr}.right-grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <div class="logo">KM</div>
+    <div>
+      <h1>KubeMind — AI Analysis POC</h1>
+      <div class="sub">AI agents + MCP prototype • Pod + Node insights • Mock data</div>
+    </div>
+  </div>
+
+  <div class="grid">
+    <!-- LEFT COLUMN -->
+    <div class="card summary">
+      <div>
+        <h3>Cluster Snapshot</h3>
+        <div class="muted">Mock cluster for demo</div>
+      </div>
+
+      <div class="metric">
+        <div>
+          <div class="small muted">Total Monthly Cost</div>
+          <div class="big">$12,540</div>
+        </div>
+        <div style="text-align:right">
+          <div class="small muted">Change (30d)</div>
+          <div class="small trend-up">▲ 14%</div>
+        </div>
+      </div>
+
+      <div class="metric">
+        <div>
+          <div class="small muted">Nodes</div>
+          <div class="big">18 (3 spot)</div>
+        </div>
+        <div style="text-align:right">
+          <div class="small muted">Pods</div>
+          <div class="small">243</div>
+        </div>
+      </div>
+
+      <div class="metric">
+        <div>
+          <div class="small muted">Avg CPU Util.</div>
+          <div class="big">42%</div>
+        </div>
+        <div style="text-align:right">
+          <div class="small muted">Avg Mem Util.</div>
+          <div class="small">56%</div>
+        </div>
+      </div>
+
+      <div class="run-area">
+        <div style="display:flex;gap:10px;align-items:center">
+          <button id="runBtn" class="btn">Run AI Analysis</button>
+          <button id="resetBtn" class="btn secondary">Reset</button>
+        </div>
+        <div class="small muted">Tip: this demo uses mock data. Replace the <code>/api/ai/analyze</code> call in JS with your Emergent LLM backend to enable real AI analysis.</div>
+      </div>
+
+      <div style="margin-top:6px">
+        <h3 style="margin-bottom:8px">Agents</h3>
+        <div class="agents" id="agents">
+          <!-- Agents rendered by JS -->
+        </div>
+      </div>
+
+      <div style="margin-top:6px">
+        <h3 style="margin-bottom:8px">Activity Log</h3>
+        <div id="log" class="log">Ready. Click “Run AI Analysis” to start.</div>
+      </div>
+
+    </div>
+
+    <!-- RIGHT COLUMN -->
+    <div>
+      <div class="right-grid">
+        <div class="card panel">
+          <h3>AI Findings & Recommendations</h3>
+          <div class="muted">Pod- and node-level suggestions with SLO-aware safety checks</div>
+
+          <div style="margin-top:12px" class="recommendations" id="recs">
+            <!-- recommendations inserted here -->
+            <div class="rec">
+              <div style="display:flex;justify-content:space-between;align-items:center">
+                <div>
+                  <div style="font-weight:700">Optimizer Agent</div>
+                  <div class="small muted">Initial scan — no action yet</div>
+                </div>
+                <div><span class="tag">Node</span></div>
+              </div>
+              <div style="margin-top:8px" class="small muted">No recommendations yet. Run Analysis.</div>
+            </div>
+          </div>
+
+        </div>
+
+        <div class="card panel">
+          <h3>Quick Insights</h3>
+          <div class="muted">At-a-glance metrics that the agents used</div>
+
+          <div style="margin-top:10px;display:flex;flex-direction:column;gap:10px">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <div>
+                <div class="small muted">Top Cost Namespace</div>
+                <div style="font-weight:700">payments-prod</div>
+              </div>
+              <div style="text-align:right">
+                <svg class="spark" viewBox="0 0 120 32" preserveAspectRatio="none">
+                  <polyline fill="none" stroke="#4cc9f0" stroke-width="2" points="0,20 18,16 36,10 54,12 72,6 90,8 108,4 120,6"></polyline>
+                </svg>
+                <div class="small muted">Trend</div>
+              </div>
+            </div>
+
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <div>
+                <div class="small muted">Idle Pods Detected</div>
+                <div style="font-weight:700">14</div>
+              </div>
+              <div style="text-align:right">
+                <div class="small muted">Action</div>
+                <div style="font-weight:700">Hibernate</div>
+              </div>
+            </div>
+
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <div>
+                <div class="small muted">Potential Monthly Savings</div>
+                <div style="font-weight:700">$4,620</div>
+              </div>
+              <div style="text-align:right">
+                <div class="small muted">Confidence</div>
+                <div style="font-weight:700">High</div>
+              </div>
+            </div>
+
+            <div style="margin-top:8px">
+              <div class="small muted">Recent alerts</div>
+              <ul style="margin:6px 0 0 18px;color:var(--muted);font-size:13px">
+                <li>Privileged pod found (payments-worker)</li>
+                <li>Namespace: dev has 6 idle pods</li>
+                <li>Spot eviction risk rising in us-east1</li>
+              </ul>
+            </div>
+
+          </div>
+
+        </div>
+      </div>
+
+      <div style="margin-top:18px" class="card panel">
+        <h3>Sample Pod Rightsizing Suggestions</h3>
+        <div class="muted">AI proposes safe changes — with SLO checks & rollback plan</div>
+
+        <div style="margin-top:12px" id="rightsizing">
+          <!-- suggestions -->
+          <div class="rec">
+            <div style="display:flex;justify-content:space-between">
+              <div>
+                <div style="font-weight:700">payments-api</div>
+                <div class="small muted">Current: 2 CPU / 4GB • Avg: 0.35 CPU / 0.9GB</div>
+              </div>
+              <div style="text-align:right">
+                <div style="font-weight:700">Recommend: 0.5 CPU / 1GB</div>
+                <div class="small muted">SLO-safe</div>
+              </div>
+            </div>
+            <div style="margin-top:8px">
+              <button class="btn" onclick="applySuggestion('payments-api')">Apply (GitOps PR)</button>
+            </div>
+          </div>
+
+        </div>
+
+      </div>
+    </div>
+
+    <!-- far right column (narrow) -->
+    <div class="card" style="width:100%;margin-top:18px">
+      <h3>Agent Health Timeline</h3>
+      <div class="muted">Shows last execution timeline for each agent</div>
+      <div id="timeline" style="margin-top:12px;display:flex;gap:12px;flex-wrap:wrap">
+        <!-- small timeline chips -->
+      </div>
+
+      <div class="footer">Prototype • Replace mock AI with your Emergent LLM backend & MCP adapters to enable real analysis.</div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+/*
+  KubeMind POC front-end
+  - Simulates AI analysis and agent statuses
+  - Replace the "simulateAIAnalysis" call with a real fetch to your backend:
+      fetch('/api/ai/analyze', { method:'POST', headers:{ Authorization:'Bearer <EMERGENT_KEY>'}, body: JSON.stringify({ clusterId }) })
+    The backend should read the Emergent LLM key from the environment and call the LLM. Never put secrets in client-side code.
+*/
+
+const AGENTS = [
+  { id:'optimizer', name:'Optimizer Agent', desc:'Pod & node rightsizing, bin-packing, defrag' },
+  { id:'finops', name:'FinOps Agent', desc:'Cost anomalies, forecasting, budget PRs' },
+  { id:'security', name:'Security Agent', desc:'Misconfigs, RBAC, exposed secrets' },
+  { id:'coord', name:'Coordinator', desc:'Validates recommendations & enforces guardrails' },
+];
+
+const agentState = {}; // running | ok | warn | err | idle
+
+const agentsEl = document.getElementById('agents');
+const logEl = document.getElementById('log');
+const recsEl = document.getElementById('recs');
+const rightsizingEl = document.getElementById('rightsizing');
+const timelineEl = document.getElementById('timeline');
+
+function appendLog(msg){
+  const t = new Date().toLocaleTimeString();
+  logEl.innerText = `${t}  > ${msg}\n` + logEl.innerText;
+}
+
+function renderAgents(){
+  agentsEl.innerHTML = '';
+  AGENTS.forEach(a=>{
+    const st = agentState[a.id] || 'idle';
+    const dot = document.createElement('div');
+    dot.className = 'dot ' + (st==='running' ? 'running' : (st==='ok' ? 'ok' : (st==='warn' ? 'warn' : (st==='err'?'err':''))));
+    const div = document.createElement('div');
+    div.className = 'agent';
+    const meta = document.createElement('div'); meta.className='meta';
+    const title = document.createElement('div'); title.className='title'; title.innerText = a.name + (st==='running' ? ' — Running' : (st==='ok' ? ' — OK' : (st==='warn' ? ' — Warning' : (st==='err' ? ' — Error' : ' — Idle'))));
+    const desc = document.createElement('div'); desc.className='desc'; desc.innerText = a.desc;
+    meta.appendChild(title); meta.appendChild(desc);
+    div.appendChild(dot); div.appendChild(meta);
+    agentsEl.appendChild(div);
+  });
+}
+
+/* small helper to fake timeline chips */
+function pushTimeline(agentId, status){
+  const chip = document.createElement('div');
+  chip.style.padding='8px 10px'; chip.style.borderRadius='10px'; chip.style.background='rgba(255,255,255,0.02)'; chip.style.fontSize='13px';
+  chip.innerText = `${AGENTS.find(x=>x.id===agentId).name.split(' ')[0]}: ${status} @ ${new Date().toLocaleTimeString()}`;
+  timelineEl.prepend(chip);
+  // keep max 8 chips
+  while(timelineEl.children.length>8) timelineEl.removeChild(timelineEl.lastChild);
+}
+
+/* Simulated analysis flow: replace internal simulate with real API call that returns JSON */
+async function simulateAIAnalysis(){
+  // Reset UI
+  recsEl.innerHTML = '';
+  rightsizingEl.innerHTML = '';
+  appendLog('Starting AI analysis (simulation)...');
+  // start agents
+  for(const a of AGENTS){
+    agentState[a.id] = 'running';
+    renderAgents();
+    appendLog(`Agent ${a.name} started.`);
+    pushTimeline(a.id, 'started');
+    await new Promise(r=>setTimeout(r, 700));
+  }
+
+  // simulate incremental updates
+  await new Promise(r=>setTimeout(r, 600));
+  appendLog('Fetching metrics from cluster (mock Prometheus)...');
+
+  // Mock data insights
+  await new Promise(r=>setTimeout(r, 1200));
+  appendLog('FinOps Agent detected cost spike in namespace payments-prod.');
+  agentState.finops = 'ok'; pushTimeline('finops','ok'); renderAgents();
+
+  await new Promise(r=>setTimeout(r,900));
+  appendLog('Optimizer Agent analyzing pod usage for rightsizing...');
+  agentState.optimizer = 'warn'; pushTimeline('optimizer','recommendation'); renderAgents();
+
+  // create a recommendation card
+  recsEl.innerHTML = `
+    <div class="rec">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div>
+          <div style="font-weight:700">Optimizer Agent</div>
+          <div class="small muted">Detected oversized pods & bin-packing opportunities</div>
+        </div>
+        <div><span class="tag">Pod • Node</span></div>
+      </div>
+      <div style="margin-top:8px">
+        <ul style="margin:8px 0 0 18px;color:var(--muted);font-size:13px">
+          <li><strong>payments-api</strong>: reduce from <code>2 CPU / 4GB</code> to <code>0.5 CPU / 1GB</code> (SLO-safe)</li>
+          <li><strong>analytics-batch</strong>: schedule to spot nodes during off-peak windows</li>
+          <li>Defragment: consolidate small pods to free up 2 nodes (us-east-1)</li>
+        </ul>
+      </div>
+      <div style="margin-top:10px;display:flex;gap:8px">
+        <button class="btn" onclick="applyAll()">Apply Selected (GitOps PR)</button>
+        <button class="btn secondary" onclick="exportReport()">Export Report</button>
+      </div>
+    </div>
+  `;
+
+  // populate rightsizing section
+  rightsizingEl.innerHTML = `
+    <div class="rec">
+      <div style="display:flex;justify-content:space-between">
+        <div>
+          <div style="font-weight:700">payments-api</div>
+          <div class="small muted">Current: 2 CPU / 4GB • Avg: 0.35 CPU / 0.9GB • 99th p95 latency within SLO</div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-weight:700">Recommend: 0.5 CPU / 1GB</div>
+          <div class="small muted">SLO-safe • Rollback plan auto-generated</div>
+        </div>
+      </div>
+      <div style="margin-top:8px;display:flex;gap:8px">
+        <button class="btn" onclick="applySuggestion('payments-api')">Apply (GitOps PR)</button>
+        <button class="btn secondary" onclick="previewPR('payments-api')">Preview PR</button>
+      </div>
+    </div>
+  `;
+
+  // continue simulation: security findings
+  await new Promise(r=>setTimeout(r,1100));
+  appendLog('Security Agent found privileged pod in payments-worker — creating remediation playbook.');
+  agentState.security = 'warn'; pushTimeline('security','warn'); renderAgents();
+
+  // coordinator validates recommendations
+  await new Promise(r=>setTimeout(r,900));
+  appendLog('Coordinator validating recommendations against policies (min 2 on-demand nodes)...');
+  // assume ok
+  agentState.coord = 'ok'; pushTimeline('coord','ok'); renderAgents();
+  appendLog('Coordinator approved non-destructive changes. Preparing GitOps PRs.');
+
+  // finish
+  await new Promise(r=>setTimeout(r,800));
+  agentState.optimizer = 'ok'; pushTimeline('optimizer','ok'); renderAgents();
+  appendLog('AI analysis complete — recommendations ready (confidence: HIGH).');
+  pushTimeline('all','complete');
+}
+
+/* Hook for real integration:
+  - Implement a backend endpoint /api/ai/analyze that:
+    1. Reads EMERGENT_LLM_KEY from server environment (process.env.EMERGENT_LLM_KEY)
+    2. Calls the Emergent LLM with relevant context + your MCP tool data
+    3. Returns structured JSON:
+       { recommendations: [...], rightsizing: [...], alerts: [...], confidence: 'high' }
+  - Replace the simulateAIAnalysis call below with a fetch:
+      const res = await fetch('/api/ai/analyze', { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ clusterId }) });
+      const payload = await res.json();
+    Then render payload into the UI (same structure used by simulateAIAnalysis).
+*/
+
+document.getElementById('runBtn').addEventListener('click', async ()=>{
+  // In a real app, you'd: show spinner, disable button, call backend real API
+  document.getElementById('runBtn').disabled = true;
+  document.getElementById('runBtn').innerText = 'Analyzing...';
+  await simulateAIAnalysis();
+  document.getElementById('runBtn').disabled = false;
+  document.getElementById('runBtn').innerText = 'Run AI Analysis';
+});
+
+document.getElementById('resetBtn').addEventListener('click', ()=>{
+  for(const a of AGENTS) agentState[a.id] = 'idle';
+  renderAgents();
+  logEl.innerText = 'Ready. Click “Run AI Analysis” to start.';
+  recsEl.innerHTML = `<div class="rec"><div style="display:flex;justify-content:space-between;align-items:center"><div><div style="font-weight:700">Optimizer Agent</div><div class="small muted">Initial scan — no action yet</div></div><div><span class="tag">Node</span></div></div><div style="margin-top:8px" class="small muted">No recommendations yet. Run Analysis.</div></div>`;
+  rightsizingEl.innerHTML = `<div class="rec"><div style="display:flex;justify-content:space-between"><div><div style="font-weight:700">payments-api</div><div class="small muted">Current: 2 CPU / 4GB • Avg: 0.35 CPU / 0.9GB</div></div><div style="text-align:right"><div style="font-weight:700">Recommend: 0.5 CPU / 1GB</div><div class="small muted">SLO-safe</div></div></div><div style="margin-top:8px"><button class="btn" onclick="applySuggestion('payments-api')">Apply (GitOps PR)</button></div></div>`;
+  timelineEl.innerHTML = '';
+});
+
+function applySuggestion(pod){
+  appendLog(`Creating GitOps PR to apply rightsizing for ${pod}...`);
+  // in real flow: create PR -> return URL
+  setTimeout(()=> {
+    appendLog(`GitOps PR created: URL → github.com/org/repo/pulls/123`);
+    alert(`GitOps PR created for ${pod} (demo).`);
+  }, 1200);
+}
+
+function applyAll(){
+  appendLog('Creating GitOps PRs for selected recommendations...');
+  setTimeout(()=> {
+    appendLog('GitOps PRs created: 3 PRs. Review required.');
+    alert('3 GitOps PRs created (demo).');
+  },1400);
+}
+
+function previewPR(pod){
+  appendLog(`Previewing PR for ${pod}...`);
+  setTimeout(()=> {
+    appendLog(`PR preview ready (diff shown).`);
+    alert('Preview: change requests/limits. (demo)');
+  },800);
+}
+
+function exportReport(){
+  appendLog('Exporting analysis report (PDF)...');
+  setTimeout(()=> {
+    appendLog('Export ready: kube-analysis-report-2025-09-15.pdf (demo)');
+    alert('Report exported (demo).');
+  },900);
+}
+
+/* init render */
+renderAgents();
+</script>
+</body>
+</html>
