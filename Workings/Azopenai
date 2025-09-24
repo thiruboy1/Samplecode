@@ -1,0 +1,18 @@
+from openai import AzureOpenAI
+
+# Replace with your details
+client = AzureOpenAI(
+    api_key="your_azure_api_key_here",
+    api_version="2024-06-01",  # check your Azure portal for supported version
+    azure_endpoint="https://<your-resource-name>.openai.azure.com/"
+)
+
+try:
+    response = client.chat.completions.create(
+        model="your-deployment-name",  # <- NOT 'gpt-4o-mini', use your deployment ID
+        messages=[{"role": "user", "content": "Hello, testing Azure OpenAI key!"}],
+        max_tokens=20
+    )
+    print("✅ Key works! Response:", response.choices[0].message.content)
+except Exception as e:
+    print("❌ Azure key not working:", str(e))
