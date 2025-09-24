@@ -1,0 +1,102 @@
+from flask import Flask, request, jsonify
+from autogen import AssistantAgent, UserProxyAgent
+from autogen.agentchat.contrib.rag_agent import RAGAgent
+from langchain.vectorstores import Chroma
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.schema import Document
+from chromadb.utils import embedding_functions
+
+# ----------------------------
+# Config
+# ----------------------------
+CHROMA_DB_PATH = "./tmp/chromadb"
+CHROMA_COLLECTION = "autogen-rag-chroma"
+
+embedding_model = "text-embedding-ada-002"   # Replace with your Azure embedding deployment
+APIKEY = "your-azure-openai-key"
+APIKEYENDPOINT = "https://your-resource.openai.azure.com"
+
+# ----------------------------
+# Embedding function
+# ----------------------------
+openai_ef = embedding_functions.OpenAIEmbeddingFunction(
+    api_key=APIKEY,
+    api_base=APIKEYENDPOINT,
+    api_type="azure",
+    model_name=embedding_model,
+)
+
+# ----------------------------
+# Create vectordb (Chroma wrapper)
+# ----------------------------
+vectordb = Chroma(
+    collection_name=CHROMA_COLLECTION,
+    embedding_function=openai_ef,
+    persist_directory=CHROMA_DB_PATH,
+)
+
+# ----------------------------
+# Add documents (with chunking)
+# ----------------------------
+def add_document(doc_id: str, doc_text: str):
+    splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
+    chunks = splitter.split_text(doc_text)
+
+    docs = [Document(page_content=chunk, metadata={"source": doc_id}) for chunk in chunks]
+    vectordb.add_documents(docs)
+
+# ----------------------------
+# Setup Autogen Agents
+# ----------------------------
+assistant = AssistantAgent(
+    name="assistant",
+    llm_config={
+        "model": "gpt-4o",   # Replace with your Azure deployment
+        "api_key": APIKEY,
+        "api_base": APIKEYENDPOINT,
+        "api_type": "azure",
+    },
+)
+
+rag_agent = RAGAgent(
+    name="rag",
+    retriever=vectordb.as_retriever(search_kwargs={"k": 3}),  # only top-3 chunks
+    assistant_agent=assistant,
+)
+
+user = UserProxyAgent(name="user")
+
+# ----------------------------
+# Flask App
+# ----------------------------
+app = Flask(__name__)
+
+@app.route("/upload", methods=["POST"])
+def upload():
+    """Upload a document and add it into ChromaDB."""
+    if "file" not in request.files:
+        return jsonify({"error": "No file uploaded"}), 400
+
+    file = request.files["file"]
+    text = file.read().decode("utf-8")
+    add_document(file.filename, text)
+
+    return jsonify({"status": "uploaded", "filename": file.filename})
+
+@app.route("/query", methods=["POST"])
+def query():
+    """Query RAGAgent with user input."""
+    data = request.get_json()
+    query_text = data.get("query", "")
+
+    if not query_text:
+        return jsonify({"error": "Query is required"}), 400
+
+    answer = user.initiate_chat(rag_agent, message=query_text)
+    return jsonify({"query": query_text, "answer": answer})
+
+# ----------------------------
+# Run the app
+# ----------------------------
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000, debug=True)
