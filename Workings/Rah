@@ -100,3 +100,45 @@ def query():
 # ----------------------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
+
+
+
+1) High-level sequence (end-to-end)
+
+User registers cluster in UI:
+
+Enters cluster-id, kubeconfig or installs an agent DaemonSet using a token, and provides a Git repo URL (manifest repo / helm values repo) + service account with PR creation rights (or a deploy pipeline token).
+
+In-cluster KubeMind Agent starts sending telemetry (Prometheus metrics, node/pod metadata) to Control Plane.
+
+Control Plane stores data (TimescaleDB / Postgres) and triggers initial inventory scan: clusters, nodes, pods, requests/limits, deployments, helm charts, Kustomize overlays.
+
+User clicks Run AI Analysis in UI (or schedules on cron).
+
+Orchestrator (Coordinator Agent) starts analysis job: it calls ML Engine for forecasts and anomaly detection, then invokes multiple MCP agents in parallel:
+
+Optimizer Agent (pod/node rightsizing & bin packing)
+
+FinOps Agent (cost breakdown & budget suggestions)
+
+Security Agent (misconfigs, RBAC, secrets)
+
+Repo Agent (understand manifests & generate PR patch)
+
+Each agent calls MCP tools to get cluster state, metrics, and cloud pricing and returns structured recommendations (JSON) to the Coordinator.
+
+Coordinator validates recommendations against policy guardrails and SLOs; produces final suggestions shown in UI.
+
+If user approves in UI, the Repo Agent:
+
+Maps recommended changes to repository files (helm values, kustomize overlays, raw manifests)
+
+Generates patch/diff
+
+Creates a Git PR with description, rationale, estimated savings and test plan.
+
+CI/CD pipeline runs PR checks (unit tests, lint, perhaps small canary deploy in staging).
+
+After approval/merge, GitOps (ArgoCD/Flux) deploys changes to cluster or RightsizeRequest CRD triggers operator to do canary apply.
+
+Monitor for regressions; auto-rollback policy if SLOs are violated after change.
