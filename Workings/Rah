@@ -142,3 +142,230 @@ CI/CD pipeline runs PR checks (unit tests, lint, perhaps small canary deploy in 
 After approval/merge, GitOps (ArgoCD/Flux) deploys changes to cluster or RightsizeRequest CRD triggers operator to do canary apply.
 
 Monitor for regressions; auto-rollback policy if SLOs are violated after change.
+"""
+OVERVIEW – Metrics Collector Purpose
+
+Goal:
+To gather the right subset of metrics (not all!) from:
+
+AKS (Kubernetes cluster level)
+
+Azure Monitor / Resource Graph / Cost Management
+
+Workload layer (Pods, Deployments, Namespaces)
+
+Node layer (VM metrics, GPU, CPU, Disk, Network)
+…and send them to the Feature Store for ML analysis.
+
+
+
+---
+
+🧩 1. Metrics Categories and Tools
+
+Layer	Tool	Metrics Collected	Granularity	Collection Mode
+
+Pod/Container	Prometheus + cAdvisor	CPU (usage, limit), Memory (usage, working set), Restarts, Pod OOMKill, Latency (P99)	Per pod, per 10s	Prometheus scrape from kubelet/cAdvisor
+Node/VM	Prometheus Node Exporter	CPU idle, load avg, disk I/O, network I/O, file system usage	Per node	DaemonSet scrape
+Cluster (AKS)	kube-state-metrics + AKS Metrics API	Pod count, Node count, ReplicaSets, Pending Pods, Resource requests/limits, Pod eviction rate	Cluster-wide	Prometheus scrape + Azure Monitor API
+Azure Resource Layer	Azure Monitor Metrics API	VM CPU %, Memory %, Network throughput, Disk read/write ops, AKS control plane metrics, Network Load Balancer health	Per resource (VM, disk, LB, NSG)	REST API pull or Log Analytics query
+Cost & Billing	Azure Cost Management + Resource Graph	Resource cost, namespace-level cost, node pool cost, SKU, Spot vs On-demand	Daily	REST API query
+Application Layer (optional)	OpenTelemetry / App Insights	Request rate, error rate, latency, dependency failures	Per service	SDK instrumentation
+
+
+
+---
+
+🧠 2. What to Collect for Our Use Case
+
+Your goal = Optimization + Cost + Performance + Scaling Intelligence
+So, we only collect high-value signals that help predict:
+
+Under/over-utilization
+
+Cost inefficiency
+
+Autoscaling opportunities
+
+Performance degradation
+
+
+Let’s shortlist per layer 👇
+
+
+---
+
+🔹 Pod-level Metrics (from Prometheus / cAdvisor)
+
+Metric	Reason
+
+container_cpu_usage_seconds_total	CPU utilization % (core utilization trend)
+container_memory_working_set_bytes	Memory usage pattern
+kube_pod_container_resource_requests_cpu_cores	Requested CPU for comparison
+kube_pod_container_resource_limits_cpu_cores	Limits vs actual usage
+kube_pod_status_ready	Availability
+kube_pod_container_status_restarts_total	Instability indicator
+kube_pod_start_time	Pod lifetime for scaling prediction
+
+
+📍 How: Prometheus scrapes from kubelet and cAdvisor (via /metrics endpoint on each node).
+
+
+---
+
+🔹 Node-level Metrics (from Node Exporter)
+
+Metric	Reason
+
+node_cpu_seconds_total	Total node CPU usage
+node_memory_MemAvailable_bytes	Memory pressure detection
+node_disk_read_bytes_total / write_bytes_total	Disk I/O load
+node_network_receive_bytes_total / transmit_bytes_total	Network throughput for autoscaling
+node_load1, node_load5	Overall node stress level
+
+
+📍 How: Installed as a DaemonSet. Exposes /metrics endpoint on each node.
+
+
+---
+
+🔹 Cluster / AKS-level Metrics (from Azure Monitor + kube-state-metrics)
+
+Metric	Reason
+
+kube_deployment_status_replicas_available	Replicas vs desired
+kube_pod_status_phase	Pending pods detection
+kube_node_status_allocatable_cpu_cores	Cluster resource ceiling
+kube_node_status_condition{condition="Ready"}	Node health check
+container_cpu_allocation (AKS metric)	Actual CPU allocated in the node pool
+container_memory_rss_bytes	Memory footprint tracking
+
+
+📍 How:
+
+kube-state-metrics → Prometheus scrape
+
+AKS → Azure Monitor REST API /subscriptions/{id}/providers/Microsoft.ContainerService/managedClusters/{cluster}/providers/microsoft.insights/metrics
+
+
+
+---
+
+🔹 Azure Resource Metrics (from Azure Monitor)
+
+Metric	Resource	Reason
+
+Percentage CPU	VM	Detect idle/overload node pools
+Network In/Out Total	VM / LB	Identify network bottlenecks
+Disk Queue Depth	Disk	Detect I/O saturation
+Memory Usage	VM	Detect memory pressure
+Egress	Storage / Network	Identify high traffic patterns
+
+
+📍 How: Use Azure Monitor Metrics REST API or Log Analytics KQL query.
+Data pulled every 5–15 min into ETL pipeline.
+
+
+---
+
+🔹 Cost Metrics (from Azure Cost Management API)
+
+Metric	Scope	Reason
+
+PreTaxCost	Resource / Namespace / Cluster	Cost breakdown by workload
+MeterCategory, MeterName	Compute, Storage, Network	Identify cost drivers
+UsageQuantity	Resource level	Actual consumption
+CostUSD	Aggregated	Daily spend trend
+
+
+📍 How:
+Azure REST API endpoint → /providers/Microsoft.CostManagement/query
+Filter by ResourceGroup, Namespace, ServiceName.
+
+
+---
+
+📦 3. Data Pipeline (How Metrics Are Collected & Used)
+
+[AKS / Azure Resources]
+        │
+        ├─► Prometheus (Pod, Node, Cluster)
+        ├─► Azure Monitor API (Infra)
+        ├─► Azure Cost Mgmt API (Cost)
+        │
+        ▼
+ [ETL Layer]
+   - Cleans, merges, normalizes timestamps
+   - Filters only top metrics (based on config)
+        │
+        ▼
+ [Feature Store]
+   - Used by ML Engine for:
+       - Resource prediction
+       - Cost anomaly detection
+       - Pod scaling recommendation
+
+
+---
+
+⚙️ 4. How You Select Metrics (Logic)
+
+We don’t collect everything.
+We define a “metrics manifest” YAML file, example:
+
+metrics_manifest:
+  pod:
+    - container_cpu_usage_seconds_total
+    - container_memory_working_set_bytes
+    - kube_pod_status_ready
+  node:
+    - node_cpu_seconds_total
+    - node_memory_MemAvailable_bytes
+  cluster:
+    - kube_deployment_status_replicas_available
+  azure:
+    - Percentage CPU
+    - Memory Usage
+  cost:
+    - PreTaxCost
+    - UsageQuantity
+
+The collector only pulls those defined metrics, reducing cost & noise.
+
+
+---
+
+💡 5. Why These Metrics (and Not 1000s)
+
+AKS exposes >1000 metrics, but:
+
+80% of optimization signals come from <50 metrics.
+
+Collecting all creates storage + compute overhead.
+
+Your ML engine and optimization logic need only correlated performance, utilization, and cost signals.
+
+
+Hence, your collector becomes configurable and intelligent, not just a blind scraper.
+
+
+---
+
+✅ Summary – What You’ll Have
+
+Tools Used: Prometheus, Node Exporter, kube-state-metrics, Azure Monitor API, Azure Cost Management API
+
+Data Collected: ~40–50 curated metrics
+
+Flow: AKS + Azure → ETL → Feature Store → ML → Optimization Agents
+
+Outcome:
+
+Identify under/over-utilized pods/nodes
+
+Predict cost & scaling impact
+
+Enable MCP agent for validated optimization
+
+
+"""
