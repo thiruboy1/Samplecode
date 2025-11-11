@@ -367,5 +367,30 @@ Predict cost & scaling impact
 
 Enable MCP agent for validated optimization
 
+Data Capture: Collect logs, metrics, and traces from all AKS namespaces and microservices.
+
+
+2. Event Streaming: Route data via Kafka/Event Router for real-time processing.
+
+
+3. Data Normalization: Standardize and enrich events for consistency across systems.
+
+
+4. Storage Layer: Store processed data in Elastic, SQL, and time-series databases.
+
+
+5. AI/ML Inference: Use anomaly detection and correlation models for root-cause analysis.
+
+
+6. AI Agents: Domain, anomaly, and remediation agents collaborate for intelligent insights.
+
+
+7. Visualization: Insights are surfaced in Grafana dashboards and AIOps console.
+
+
+8. Automation: Trigger auto-remediation or workflow actions via bots or pipelines.
+
+
+9. Continuous Learning: Feedback from incidents retrains models to improve accuracy.
 
 """
