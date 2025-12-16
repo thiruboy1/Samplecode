@@ -654,4 +654,109 @@ Phase 6	Observability	Logging, lineage, alerts, dashboards
 Would you like me to generate this as a PowerPoint (.pptx) file with visuals (architecture diagrams, icons, and flow arrows) so you can present directly to the client?
 
 I can make it fully formatted and export-ready — just confirm, and I’ll create the PPT for you.
+
+
+
+import json
+import boto3
+import time
+from botocore.exceptions import ClientError
+
+LOCK_TABLE = "glue_job_lock"
+GLUE_JOB = "generic_s3_processor"
+LOCK_TTL = 600
+
+ddb = boto3.client("dynamodb")
+glue = boto3.client("glue")
+
+def acquire_lock(table):
+    try:
+        ddb.put_item(
+            TableName=LOCK_TABLE,
+            Item={
+                "pk": {"S": table},
+                "status": {"S": "RUNNING"},
+                "ttl": {"N": str(int(time.time()) + LOCK_TTL)}
+            },
+            ConditionExpression="attribute_not_exists(pk)"
+        )
+        return True
+    except ClientError:
+        return False
+
+def lambda_handler(event, context):
+    body = json.loads(event["Records"][0]["body"])
+    record = json.loads(body["Message"])["Records"][0]
+    key = record["s3"]["object"]["key"]
+    table = key.split("/")[0]
+
+    if not acquire_lock(table):
+        print(f"Glue already running for {table}")
+        return
+
+    glue.start_job_run(
+        JobName=GLUE_JOB,
+        Arguments={"--table_name": table}
+    )
+
+    print(f"Glue triggered for {table}")
+
+
+
+
+gl
+
+import sys
+import boto3
+from pyspark.sql import SparkSession
+from awsglue.utils import getResolvedOptions
+
+args = getResolvedOptions(sys.argv, ["table_name"])
+TABLE = args["table_name"]
+
+SOURCE_BUCKET = "my-data-ingestion-bucket"
+SOURCE_PREFIX = f"{TABLE}/"
+ARCHIVE_PREFIX = f"{TABLE}/archive/"
+LOCK_TABLE = "glue_job_lock"
+
+spark = SparkSession.builder.getOrCreate()
+s3 = boto3.client("s3")
+ddb = boto3.client("dynamodb")
+
+def list_files():
+    resp = s3.list_objects_v2(
+        Bucket=SOURCE_BUCKET,
+        Prefix=SOURCE_PREFIX
+    )
+    return [
+        f"s3://{SOURCE_BUCKET}/{o['Key']}"
+        for o in resp.get("Contents", [])
+        if not o["Key"].endswith("/")
+    ]
+
+files = list_files()
+
+if files:
+    df = spark.read.option("header", "true").csv(files)
+
+    df.write.mode("append").parquet(
+        f"s3://processed-data/{TABLE}/"
+    )
+
+    # archive files
+    for f in files:
+        key = f.replace(f"s3://{SOURCE_BUCKET}/", "")
+        s3.copy_object(
+            Bucket=SOURCE_BUCKET,
+            CopySource={"Bucket": SOURCE_BUCKET, "Key": key},
+            Key=ARCHIVE_PREFIX + key.split("/")[-1]
+        )
+        s3.delete_object(Bucket=SOURCE_BUCKET, Key=key)
+
+# release lock
+ddb.delete_item(
+    TableName=LOCK_TABLE,
+    Key={"pk": {"S": TABLE}}
+)
+
 """
