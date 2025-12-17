@@ -758,5 +758,119 @@ ddb.delete_item(
     TableName=LOCK_TABLE,
     Key={"pk": {"S": TABLE}}
 )
+Phase 1: Discovery & Baseline Assessment
+
+Review existing Jenkins, GitLab, and AWS CodePipeline setups
+
+Identify:
+
+Tool overlap and redundancies
+
+Manual and error-prone steps
+
+Security and governance gaps
+
+
+Define target-state DevOps architecture and standards
+
+
+Outcome: Clear roadmap with no disruption to ongoing delivery
+
+
+---
+
+Phase 2: CI/CD Standardization & Migration
+
+Design standardized GitLab CI pipeline templates
+
+Gradual migration from Jenkins to GitLab:
+
+Application-wise, risk-based approach
+
+Parallel execution to avoid downtime
+
+
+Centralize logging, artifacts, and pipeline visibility
+
+
+Outcome: Unified CI/CD platform with reduced maintenance cost
+
+
+---
+
+Phase 3: GitOps Enablement & Deployment Modernization
+
+Align application repositories with Argo CD
+
+Standardize deployment strategies:
+
+Blue-Green / Canary for EKS
+
+Controlled Lambda releases
+
+
+Implement environment promotion model
+
+
+Outcome: Safer, repeatable, and auditable deployments
+
+
+---
+
+Phase 4: Security & Compliance Integration
+
+Enable GitLab native security scans
+
+Integrate Qualys and Cortex XDR into CI/CD pipelines
+
+Define quality and security gates per environment
+
+Centralized security reporting and dashboards
+
+
+Outcome: Security built into delivery, not added later
+
+
+---
+
+Phase 5: Observability, Optimization & Metrics
+
+Integrate Datadog for:
+
+Application monitoring
+
+Deployment tracking
+
+Infrastructure visibility
+
+
+Enable DevOps KPIs (DORA metrics):
+
+Deployment frequency
+
+Lead time
+
+Change failure rate
+
+
+Continuous pipeline and cost optimization
+
+
+Outcome: Data-driven DevOps maturity and reliability
+
+
+---
+
+Phase 6: Enablement, Governance & Handover
+
+Documentation, runbooks, and best-practice guides
+
+Knowledge transfer and team workshops
+
+Define DevOps governance and operating model
+
+
+Outcome: Sustainable DevOps adoption and self-sufficient teams
+
 
 """
