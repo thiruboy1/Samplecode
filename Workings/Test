@@ -117,4 +117,173 @@ Pushes pipeline health metrics into Grafana/Prometheus.
 
 
 Value:
-👉 Improves developer visibility, reduces waiting time, and builds trust in CI/CD processes.
+👉 Improves developer visibility,
+
+import sys
+import json
+import time
+import boto3
+import requests
+from datetime import datetime
+
+from awsglue.utils import getResolvedOptions
+from awsglue.context import GlueContext
+from pyspark.context import SparkContext
+from pyspark.sql import SparkSession
+
+
+# =====================================================
+# 1. JOB ARGS
+# =====================================================
+args = getResolvedOptions(
+    sys.argv,
+    ["SECRET_NAME", "ODATA_URL", "S3_RAW_PATH", "ENTITY_NAME"]
+)
+
+SECRET_NAME = args["SECRET_NAME"]
+ODATA_URL = args["ODATA_URL"]
+S3_RAW_PATH = args["S3_RAW_PATH"]
+ENTITY_NAME = args["ENTITY_NAME"]
+
+
+# =====================================================
+# 2. SPARK / GLUE CONTEXT
+# =====================================================
+sc = SparkContext.getOrCreate()
+glueContext = GlueContext(sc)
+spark = glueContext.spark_session
+spark.conf.set("spark.sql.shuffle.partitions", "200")
+
+
+# =====================================================
+# 3. LOAD SECRETS
+# =====================================================
+def get_oauth_credentials(secret_name):
+    client = boto3.client("secretsmanager")
+    secret = client.get_secret_value(SecretId=secret_name)
+    return json.loads(secret["SecretString"])
+
+
+creds = get_oauth_credentials(SECRET_NAME)
+
+
+# =====================================================
+# 4. GET ACCESS TOKEN
+# =====================================================
+def get_access_token(token_url, client_id, client_secret):
+    response = requests.post(
+        token_url,
+        auth=(client_id, client_secret),
+        data={"grant_type": "client_credentials"},
+        timeout=30
+    )
+    response.raise_for_status()
+    return response.json()["access_token"]
+
+
+access_token = get_access_token(
+    creds["token_url"],
+    creds["client_id"],
+    creds["client_secret"]
+)
+
+
+# =====================================================
+# 5. SAFE GET WITH RETRY
+# =====================================================
+def safe_get(url, headers, retries=4):
+    for attempt in range(retries):
+        try:
+            resp = requests.get(url, headers=headers, timeout=60)
+            resp.raise_for_status()
+            return resp
+        except Exception as e:
+            if attempt == retries - 1:
+                raise
+            time.sleep(2 ** attempt)
+
+
+# =====================================================
+# 6. FETCH ODATA WITH PAGINATION
+# =====================================================
+def fetch_odata(odata_url, access_token):
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Accept": "application/json"
+    }
+
+    all_records = []
+    next_url = odata_url
+    page = 1
+
+    while next_url:
+        print(f"[INFO] Fetching page {page}")
+
+        response = safe_get(next_url, headers)
+        data = response.json()
+
+        if "value" in data:
+            records = data["value"]
+        elif "d" in data and "results" in data["d"]:
+            records = data["d"]["results"]
+        else:
+            raise Exception("Invalid OData response format")
+
+        all_records.extend(records)
+
+        next_url = (
+            data.get("@odata.nextLink")
+            or data.get("d", {}).get("__next")
+        )
+
+        page += 1
+
+    return all_records
+
+
+# =====================================================
+# 7. FETCH DATA
+# =====================================================
+records = fetch_odata(ODATA_URL, access_token)
+
+if not records:
+    print("[INFO] No records fetched. Exiting job.")
+    sys.exit(0)
+
+print(f"[INFO] Total records fetched: {len(records)}")
+
+
+# =====================================================
+# 8. CREATE SPARK DATAFRAME
+# =====================================================
+df = spark.createDataFrame(records)
+
+
+# =====================================================
+# 9. ADD AUDIT COLUMNS
+# =====================================================
+df = (
+    df
+    .withColumn("_ingestion_ts", spark.sql("current_timestamp()"))
+    .withColumn("_entity_name", spark.sql(f"'{ENTITY_NAME}'"))
+)
+
+
+# =====================================================
+# 10. WRITE TO S3 (PARQUET)
+# =====================================================
+run_date = datetime.utcnow().strftime("%Y-%m-%d")
+
+output_path = f"{S3_RAW_PATH}/run_date={run_date}/"
+
+(
+    df
+    .repartition(20)
+    .write
+    .mode("overwrite")
+    .parquet(output_path)
+)
+
+print(f"[SUCCESS] Data written to {output_path}")
+
+reduces waiting time, and builds trust in CI/CD processes.
