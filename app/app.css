@@ -1,4 +1,4 @@
-@import 'tailwindcss/base';
+ji@import 'tailwindcss/base';
 @import 'tailwindcss/components';
 @import 'tailwindcss/utilities';
 
@@ -160,7 +160,65 @@
   }
 }
 
-/* Custom scrollbar styles */
+/* Custom scrollbar Capstone Proposal: Autonomous AI Cloud Governance Platform
+Vision
+Build an AI-powered Autonomous Cloud Governance Platform that continuously monitors, analyses, predicts, and remediates governance, security, compliance, cost, and operational issues across multi-cloud environments.
+
+Business Problem
+•	Cloud environments are growing rapidly across AWS, Azure and GCP.
+•	Governance reviews are largely manual and reactive.
+•	Policy violations, security risks, cloud cost, and configuration drift are discovered late.
+•	Existing tools detect issues but rarely recommend or execute remediation intelligently.
+Proposed Solution
+•	Develop a multi-agent AI platform that acts as an autonomous Cloud Governance Officer.
+•	Continuously assess governance posture, prioritise risks, recommend fixes and automate approved remediation.
+Key AI Agents
+•	Governance Agent – Policy validation and governance scoring.
+•	Security Agent – IAM, secrets, network and configuration analysis.
+•	Compliance Agent – CIS, ISO 27001, NIST, SOC2 and internal policy checks.
+•	FinOps Agent – Cost optimisation and anomaly detection.
+•	Kubernetes Governance Agent – Cluster, namespace and workload governance.
+•	Remediation Agent – Generates Infrastructure-as-Code fixes and pull requests.
+•	Executive Insights Agent – Dashboards, trends, KPIs and business recommendations.
+Core Features
+•	Unified multi-cloud governance dashboard
+•	AI risk prioritisation
+•	Policy-as-Code validation
+•	Infrastructure drift detection
+•	Predictive governance analytics
+•	Automated remediation workflows
+•	Executive governance scorecards
+•	Audit trail and compliance reporting
+Technology Stack (Example)
+•	Frontend: React
+•	Backend: Python/FastAPI
+•	AI: Azure OpenAI / OpenAI
+•	Agents: LangGraph/CrewAI/AutoGen
+•	Cloud: Azure, AWS, GCP
+•	Kubernetes
+•	Terraform
+•	GitHub Actions / Azure DevOps
+•	Vector Database + PostgreSQL
+Business Benefits
+•	Reduce governance effort
+•	Improve security posture
+•	Reduce cloud costs
+•	Accelerate compliance audits
+•	Standardise cloud governance
+•	Enable proactive rather than reactive operations
+Capstone Demonstration
+•	Provision a sample cloud environment.
+•	Inject governance violations.
+•	AI detects, prioritises and explains risks.
+•	AI generates remediation plan and Infrastructure-as-Code updates.
+•	Display governance score improvement and executive dashboard.
+Future Roadmap
+•	Self-healing cloud governance
+•	Natural language governance assistant
+•	Enterprise policy marketplace
+•	Predictive compliance and risk forecasting
+
+styles */
 ::-webkit-scrollbar {
   width: 6px;
 }
