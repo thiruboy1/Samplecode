@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
 import getpass
 import os
 import sys
@@ -38,11 +40,17 @@ def encrypt_file(source: Path, destination: Path, password: str) -> None:
     nonce = os.urandom(NONCE_SIZE)
     key = derive_key(password, salt)
     ciphertext = AESGCM(key).encrypt(nonce, source.read_bytes(), MAGIC)
-    write_new_file(destination, MAGIC + salt + nonce + ciphertext)
+    encrypted_payload = MAGIC + salt + nonce + ciphertext
+    # Base64 keeps the encrypted data in a portable text-only form.
+    text_payload = base64.b64encode(encrypted_payload) + b"\n"
+    write_new_file(destination, text_payload)
 
 
 def decrypt_file(source: Path, destination: Path, password: str) -> None:
-    payload = source.read_bytes()
+    try:
+        payload = base64.b64decode(source.read_bytes().strip(), validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise ValueError("The encrypted file does not contain valid Base64 text.") from exc
     minimum_size = len(MAGIC) + SALT_SIZE + NONCE_SIZE
     if len(payload) <= minimum_size or not payload.startswith(MAGIC):
         raise ValueError("This is not a valid encrypted text file.")
@@ -88,7 +96,7 @@ def build_parser() -> argparse.ArgumentParser:
     encrypt_parser.add_argument("filename", type=safe_filename)
 
     decrypt_parser = subparsers.add_parser(
-        "decrypt", help="Decrypt encrypted/<filename>.enc"
+        "decrypt", help="Decrypt encrypted/<filename>.encrypted.txt"
     )
     decrypt_parser.add_argument("filename", type=safe_filename)
     return parser
@@ -101,17 +109,18 @@ def main() -> int:
     try:
         if args.command == "encrypt":
             source = project_dir / "input" / args.filename
-            destination = project_dir / "encrypted" / f"{args.filename}.enc"
+            destination = project_dir / "encrypted" / f"{args.filename}.encrypted.txt"
             if not source.is_file():
                 raise FileNotFoundError(f"Input file not found: {source}")
             encrypt_file(source, destination, ask_password(confirm=True))
             print(f"Encrypted successfully: {destination}")
         else:
             source = project_dir / "encrypted" / args.filename
+            suffix = ".encrypted.txt"
             output_name = (
-                args.filename[:-4]
-                if args.filename.lower().endswith(".enc")
-                else f"{args.filename}.decrypted"
+                args.filename[: -len(suffix)]
+                if args.filename.lower().endswith(suffix)
+                else f"{args.filename}.decrypted.txt"
             )
             destination = project_dir / "decrypted" / output_name
             if not source.is_file():
